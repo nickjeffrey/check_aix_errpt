@@ -1,0 +1,159 @@
+#!/usr/bin/ksh
+
+# nagios helper script to alert on AIX errpt entries.
+# This script will alert whenever there is an errpt entry on an AIX box.
+#
+# The sysadmin will is expected to investigate the root cause, 
+# resolve the issue, and then clear the errpt with "errclear 0"
+
+
+# CHANGE LOG
+# -----------
+#  2010/06/04	njeffrey@anisoftgroup.com	Script created
+
+
+#
+# Sample errpt output:
+#
+# IDENTIFIER TIMESTAMP  T C RESOURCE_NAME  DESCRIPTION
+# A63BEB70   0626155306 P S SYSPROC        SOFTWARE PROGRAM ABNORMALLY TERMINATED
+# ...
+#
+#
+# Date/time format mmddhhmmyy (month, day, hour, minute, and year)
+#
+
+
+
+
+function declare_variables {
+   #
+   errpt=/usr/bin/errpt
+   egrep=/usr/bin/egrep
+   tr=/usr/bin/tr
+   awk=/usr/bin/awk
+   #
+   #
+   # Nagios return codes
+   #
+   OK=0
+   WARN=1
+   CRITICAL=2
+   UNKNOWN=3
+   #
+   CHECK_NAME="AIX errpt"
+}
+
+
+
+
+
+function sanity_checks {
+   #
+   # this section checks file permissions
+   #
+   if [[ ! -f "$errpt" ]] then
+      echo "$CHECK_NAME UKNOWN required file $errpt not found "
+      exit $UNKNOWN
+   fi
+   if [[ ! -x "$errpt" ]] then
+      echo "$CHECK_NAME UNKNOWN required file $errpt is not executable by the nagios user "
+      exit $UNKNOWN
+   fi
+   if [[ ! -f "$egrep" ]] then
+      echo "$CHECK_NAME UKNOWN required file $egrep not found "
+      exit $UNKNOWN
+   fi
+   if [[ ! -x "$egrep" ]] then
+      echo "$CHECK_NAME UNKNOWN required file $egrep is not executable by the nagios user "
+      exit $UNKNOWN
+   fi
+   if [[ ! -f "$tr" ]] then
+      echo "$CHECK_NAME UKNOWN required file $tr not found "
+      exit $UNKNOWN
+   fi
+   if [[ ! -x "$tr" ]] then
+      echo "$CHECK_NAME UNKNOWN required file $tr is not executable by the nagios user "
+      exit $UNKNOWN
+   fi
+   if [[ ! -f "$awk" ]] then
+      echo "$CHECK_NAME UKNOWN required file $awk not found "
+      exit $UNKNOWN
+   fi
+   if [[ ! -x "$awk" ]] then
+      echo "$CHECK_NAME UNKNOWN required file $awk is not executable by the nagios user "
+      exit $UNKNOWN
+   fi
+}
+
+
+
+function check_for_errpt_entries {
+   #
+   # This section checks to see if there are errpt entries
+   #
+   # get number of errpt entries
+   errpt_count_total=`$errpt | $egrep -c -v '^IDENTIFIER'`
+   #
+   # see if any of the entries are of "Type:   PERM"
+   # This will indicate a permanent error, which is more critical.
+   errpt_count_perm=`$errpt -a | $egrep -c 'Type: *PERM'`
+   #
+   #
+   # Determine the status
+   #
+   if [[ "$errpt_count_total" -eq 0 ]] then
+      echo "$CHECK_NAME OK - no error report entries"
+      exit $OK
+   fi
+   #
+   # if we get this far, there is at least one error in the errpt
+   #
+   if [[ "$errpt_count_total" -gt 0 ]] then
+      #
+      # slurp all the errpt entries into a single line of text so it can be used by nagios
+      errpt_message_body=`$errpt | $egrep -v ^IDENTIFIER |$tr -s ' ' | $awk '{print substr($0,index($0,$5))}' | $tr '\n' '\t'`
+      #
+      # If the message body is ridiculously large, truncate it to the first 500 characters.
+      # If the message body is huge, the sysadmin will want to login to the AIX box and run errpt anyway.
+      if [[ ${#errpt_message_body} -gt 500 ]] then
+         errpt_message_body=`echo $errpt_message_body | $awk '{print substr($0,1,500)}'`
+      fi
+      #
+      #  Figure out if the alert severity is WARN or CRITICAL
+      #
+      if [ "$errpt_count_perm" -eq 0 ] ; then
+         echo "$CHECK_NAME WARN: $errpt_count_total errpt entries, $errpt_count_perm PERManent errors:: $errpt_message_body"
+         exit $WARN
+      fi
+      if [ "$errpt_count_perm" -gt 0 ] ; then
+         echo "$CHECK_NAME CRITICAL: $errpt_count_total errpt entries, $errpt_count_perm PERManent errors: $errpt_message_body"
+         exit $CRITICAL
+      fi
+   fi
+}
+
+
+
+
+
+function exit_with_unknown_error {
+   #
+   # we should never get this far
+   #
+   echo "$CHECK_NAME UNKNOWN - an unknown error occurred"
+   exit $UNKNOWN
+}
+
+
+
+#
+# ---  Main body of script is below  ----------------------------------------------
+#
+#
+# This section calls all the functions defined earlier in the script
+#
+declare_variables
+sanity_checks
+check_for_errpt_entries
+exit_with_unknown_error
