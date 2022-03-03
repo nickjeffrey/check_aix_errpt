@@ -3,16 +3,17 @@
 # nagios helper script to alert on AIX errpt entries.
 # This script will alert whenever there is an errpt entry on an AIX box.
 #
-# The sysadmin will is expected to investigate the root cause,
+# The sysadmin will is expected to investigate the root cause, 
 # resolve the issue, and then clear the errpt with "errclear 0"
 
 
 # CHANGE LOG
 # -----------
-#  2010/06/04   njeffrey           Script created
-#  2021/11/05   njeffrey           Workaround for bug in AIX 7200-03, non-root user cannot run errpt https://www.ibm.com/support/pages/apar/IJ10405
-#  2021/11/08   njeffrey           Try sudo if  AIX 7200-03 detected to work around APAR IJ10405
-#  2021/11/08   njeffrey           Add $verbose flag for debugging
+#  2010/06/04	njeffrey	   Script created
+#  2021/11/05	njeffrey	   Workaround for bug in AIX 7200-03, non-root user cannot run errpt https://www.ibm.com/support/pages/apar/IJ10405
+#  2021/11/08	njeffrey	   Try sudo if  AIX 7200-03 detected to work around APAR IJ10405
+#  2021/11/08	njeffrey	   Add $verbose flag for debugging
+#  2022/03/02	njeffrey	   Add $aix_patch_level variable to store output of "oslevel -s" to avoid multiple system calls
 
 #
 # Sample errpt output:
@@ -24,6 +25,7 @@
 #
 # Date/time format mmddhhmmyy (month, day, hour, minute, and year)
 #
+
 
 
 
@@ -49,6 +51,8 @@ function declare_variables {
    #
    CHECK_NAME="AIX errpt"
 }
+
+
 
 
 
@@ -103,6 +107,17 @@ function sanity_checks {
 }
 
 
+function get_aix_patch_level {
+   #
+   if [[ $verbose = "yes" ]] ; then
+      echo Running get_aix_patch_level function
+   fi
+   #
+   # oslevel can take several seconds to run, so just run it once and save the output.
+   aix_patch_level=`$oslevel -s`
+
+}
+
 
 function check_for_7200_03_bug {
    #
@@ -113,9 +128,7 @@ function check_for_7200_03_bug {
       echo Running check_for_7200_03_bug function
    fi
    #
-   # get AIX patch level
-   aix_patch_level=`$oslevel -s | $egrep -c '^7200-03'`
-   if [[ "$aix_patch_level" -eq 1 ]] then
+   if [[ 1 -eq $(echo $aix_patch_level | $egrep -c '^7200-03') ]] then
       if [[ $verbose = "yes" ]] ; then
          echo Running Detected AIX patch level 7200-03, will need to use sudo to check errpt due to APAR IJ10405
       fi
@@ -135,14 +148,14 @@ function check_for_errpt_entries {
    #
    # get number of errpt entries
    # workaround for AIX 7200-03, try using sudo
-   $oslevel -s | $grep -q '^7200-03' || errpt_count_total=`     $errpt | $egrep -c -v '^IDENTIFIER'`
-   $oslevel -s | $grep -q '^7200-03' && errpt_count_total=`sudo $errpt | $egrep -c -v '^IDENTIFIER'`
+   echo $aix_patch_level | $grep -q '^7200-03' || errpt_count_total=`     $errpt | $egrep -c -v '^IDENTIFIER'`
+   echo $aix_patch_level | $grep -q '^7200-03' && errpt_count_total=`sudo $errpt | $egrep -c -v '^IDENTIFIER'`
    #
    # see if any of the entries are of "Type:   PERM"
    # This will indicate a permanent error, which is more critical.
    # workaround for AIX 7200-03, try using sudo
-   $oslevel -s | $grep -q '^7200-03' || errpt_count_perm=`     $errpt -a | $egrep -c '^Type: *PERM'`
-   $oslevel -s | $grep -q '^7200-03' && errpt_count_perm=`sudo $errpt -a | $egrep -c '^Type: *PERM'`
+   echo $aix_patch_level | $grep -q '^7200-03' || errpt_count_perm=`     $errpt -a | $egrep -c '^Type: *PERM'`
+   echo $aix_patch_level | $grep -q '^7200-03' && errpt_count_perm=`sudo $errpt -a | $egrep -c '^Type: *PERM'`
    #
    #
    # Determine the status
@@ -160,8 +173,8 @@ function check_for_errpt_entries {
          echo Found errpt entries
       fi
       # slurp all the errpt entries into a single line of text so it can be used by nagios
-      $oslevel -s | $grep -q '^7200-03' || errpt_message_body=`     $errpt | $egrep -v ^IDENTIFIER |$tr -s ' ' | $awk '{print substr($0,index($0,$5))}' | $tr '\n' '\t'`
-      $oslevel -s | $grep -q '^7200-03' && errpt_message_body=`sudo $errpt | $egrep -v ^IDENTIFIER |$tr -s ' ' | $awk '{print substr($0,index($0,$5))}' | $tr '\n' '\t'`
+      echo $aix_patch_level | $grep -q '^7200-03' || errpt_message_body=`     $errpt | $egrep -v ^IDENTIFIER |$tr -s ' ' | $awk '{print substr($0,index($0,$5))}' | $tr '\n' '\t'`
+      echo $aix_patch_level | $grep -q '^7200-03' && errpt_message_body=`sudo $errpt | $egrep -v ^IDENTIFIER |$tr -s ' ' | $awk '{print substr($0,index($0,$5))}' | $tr '\n' '\t'`
       #
       # If the message body is ridiculously large, truncate it to the first 500 characters.
       # If the message body is huge, the sysadmin will want to login to the AIX box and run errpt anyway.
@@ -208,9 +221,7 @@ function exit_with_unknown_error {
 #
 declare_variables
 sanity_checks
+get_aix_patch_level
 check_for_7200_03_bug
 check_for_errpt_entries
 exit_with_unknown_error
-
-
-
